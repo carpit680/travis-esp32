@@ -1,14 +1,106 @@
 #include "stdio.h"
 #include "esp_chatter.h"
+#include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "rotary_encoder.h"
+#include "driver/mcpwm.h"
+#include "soc/mcpwm_reg.h"
+#include "soc/mcpwm_struct.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "Wheel Velocities";
+   
+
+///////PIN BINDINGS///////
+// Left Motor         ////
+// DIR:  D12          ////
+// EncA: D14          ////
+// PWM:  D13          ////
+// EncB: D27          ////
+//////////////////////////
+// Right Motor        ////
+// PWM:  D15          ////
+// DIR:  D2           ////
+// EncA: D23          ////
+// EncB: D22          ////
+//////////////////////////
+
+
+
+#define GPIO_PWM_LEFT 13  //Set GPIO 13 as PWM0A / Left PWM
+#define GPIO_PWM_RIGHT 15   //Set GPIO 15 as PWM0B / Right PWM
+#define GPIO_DIR_LEFT GPIO_NUM_12
+#define GPIO_DIR_RIGHT GPIO_NUM_2
+
+static void mcpwm_example_gpio_initialize()
+{
+    printf("initializing mcpwm gpio...\n");
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, GPIO_PWM_LEFT);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, GPIO_PWM_RIGHT);
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[12], PIN_FUNC_GPIO);
+    gpio_set_direction(GPIO_DIR_LEFT, GPIO_MODE_OUTPUT);
+    gpio_set_direction(GPIO_DIR_RIGHT, GPIO_MODE_OUTPUT);
+}
+
+static void brushed_motor_forward(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num , float duty_cycle)
+{
+    gpio_set_level(GPIO_DIR_LEFT, 0);
+    gpio_set_level(GPIO_DIR_RIGHT, 1);
+    // mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_B);
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_A, duty_cycle);
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_B, duty_cycle);
+    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
+}
+
+static void brushed_motor_backward(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num , float duty_cycle)
+{
+    gpio_set_level(GPIO_DIR_LEFT, 1);
+    gpio_set_level(GPIO_DIR_RIGHT, 0);
+    // mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_A);
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_A, duty_cycle);
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_B, duty_cycle);
+    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
+}
+
+static void brushed_motor_stop(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num)
+{
+    mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_A);
+    mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_B);
+}
+
+static void mcpwm_example_brushed_motor_control(void *arg)
+{
+    //1. mcpwm gpio initialization
+    mcpwm_example_gpio_initialize();
+
+    //2. initial mcpwm configuration
+    printf("Configuring Initial Parameters of mcpwm...\n");
+    mcpwm_config_t pwm_config;
+    pwm_config.frequency = 1000;    //frequency = 500Hz,
+    pwm_config.cmpr_a = 0;    //duty cycle of PWMxA = 0
+    pwm_config.cmpr_b = 0;    //duty cycle of PWMxb = 0
+    pwm_config.counter_mode = MCPWM_UP_COUNTER;
+    pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
+    mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);    //Configure PWM0A & PWM0B with above settings
+    while (1) {
+        brushed_motor_forward(MCPWM_UNIT_0, MCPWM_TIMER_0, 50.0);
+        vTaskDelay(2000 / portTICK_RATE_MS);
+        brushed_motor_backward(MCPWM_UNIT_0, MCPWM_TIMER_0, 50.0);
+        vTaskDelay(2000 / portTICK_RATE_MS);
+        brushed_motor_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+        vTaskDelay(2000 / portTICK_RATE_MS);
+    }
+}
 
 void app_main(void)
-{
+{   
+    printf("Testing brushed motor...\n");
+    xTaskCreate(mcpwm_example_brushed_motor_control, "mcpwm_examlpe_brushed_motor_control", 4096, NULL, 5, NULL);
+
     // Rotary encoder underlying device is represented by a PCNT unit in this example
     uint32_t pcnt_unit_enc_left = 0;
     uint32_t pcnt_unit_enc_right = 1;
