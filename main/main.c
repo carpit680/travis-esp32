@@ -27,12 +27,36 @@ static const char *TAG = "Wheel Velocities";
 // EncB: D22          ////
 //////////////////////////
 
+// double Ku = 4.515;
+// double Tu = 0.45;
+// double kp = 0.6 * 4.515; // Ku = 4.515 Tu = 0.45secs
+// double ki = 2 * 0.6 * 4.515 / 0.45;
+// double kd = 0.6 * 4.515 * 0.45 / 8;
+
+double kp = 2.2;
+double ki = 2.5;
+double kd = 0;
+
+double setpoint = 10; // desired velocity in m/s
+double error;
+double prevError = 0;
+double integral = 0;
+double derivative;
+double dutyCycle;
 
 
 #define GPIO_PWM_LEFT 13  //Set GPIO 13 as PWM0A / Left PWM
 #define GPIO_PWM_RIGHT 15   //Set GPIO 15 as PWM0B / Right PWM
 #define GPIO_DIR_LEFT GPIO_NUM_12
 #define GPIO_DIR_RIGHT GPIO_NUM_2
+
+void updatePID(double currentVelocity) {
+  error = setpoint - currentVelocity;
+  integral += error;
+  derivative = error - prevError;
+  dutyCycle = kp*error + ki*integral + kd*derivative;
+  prevError = error;
+}
 
 static void mcpwm_example_gpio_initialize()
 {
@@ -87,12 +111,13 @@ static void mcpwm_example_brushed_motor_control(void *arg)
     pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);    //Configure PWM0A & PWM0B with above settings
     while (1) {
-        brushed_motor_forward(MCPWM_UNIT_0, MCPWM_TIMER_0, 50.0);
-        vTaskDelay(2000 / portTICK_RATE_MS);
-        brushed_motor_backward(MCPWM_UNIT_0, MCPWM_TIMER_0, 50.0);
-        vTaskDelay(2000 / portTICK_RATE_MS);
-        brushed_motor_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
-        vTaskDelay(2000 / portTICK_RATE_MS);
+        
+        brushed_motor_forward(MCPWM_UNIT_0, MCPWM_TIMER_0, dutyCycle);
+        vTaskDelay(500 / portTICK_RATE_MS);
+        // brushed_motor_backward(MCPWM_UNIT_0, MCPWM_TIMER_0, vel_right);
+        // vTaskDelay(2000 / portTICK_RATE_MS);
+        // brushed_motor_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
+        // vTaskDelay(2000 / portTICK_RATE_MS);
     }
 }
 
@@ -141,10 +166,10 @@ void app_main(void)
         vel_left = 3.1415 * (encoder_left_val -  encoder_left_prev_val) / 30;
         vel_right = 3.1415 * (encoder_right_val - encoder_right_prev_val) / 30;
         
-        ESP_LOGI(TAG, "%f, %f", vel_left, vel_right);
+        ESP_LOGI(TAG, "%f, %f, %f", vel_left, vel_right, dutyCycle);
         rosserial_publish(vel_left + vel_right);
         vTaskDelay(pdMS_TO_TICKS(100));
-
+        updatePID(vel_left); //m/s
         encoder_left_prev_val = encoder_left_val;
         encoder_right_prev_val = encoder_right_val;
     }
