@@ -33,29 +33,45 @@ static const char *TAG = "Wheel Velocities";
 // double ki = 2 * 0.6 * 4.515 / 0.45;
 // double kd = 0.6 * 4.515 * 0.45 / 8;
 
-double kp = 2.2;
-double ki = 2.5;
-double kd = 0;
+double kp_left = 4.5;
+double ki_left = 0;
+double kd_left = 0;
 
-double setpoint = 10; // desired velocity in m/s
-double error;
-double prevError = 0;
-double integral = 0;
-double derivative;
-double dutyCycle;
+double kp_right = 4.5;
+double ki_right = 0;
+double kd_right = 0;
 
+double setpoint_left = 10;  // desired velocity in m/s
+double setpoint_right = 10; // desired velocity in m/s
+double error_left;
+double error_right;
+double prev_error_left = 0;
+double prev_error_right = 0;
+double integral_left = 0;
+double integral_right = 0;
+double derivative_left;
+double derivative_right;
+double duty_cycle_left;
+double duty_cycle_right;
+bool direction_left = 0; // Forward
+bool direction_right = 1; // Forward
 
 #define GPIO_PWM_LEFT 13  //Set GPIO 13 as PWM0A / Left PWM
 #define GPIO_PWM_RIGHT 15   //Set GPIO 15 as PWM0B / Right PWM
 #define GPIO_DIR_LEFT GPIO_NUM_12
 #define GPIO_DIR_RIGHT GPIO_NUM_2
 
-void updatePID(double currentVelocity) {
-  error = setpoint - currentVelocity;
-  integral += error;
-  derivative = error - prevError;
-  dutyCycle = kp*error + ki*integral + kd*derivative;
-  prevError = error;
+void updatePID(double current_velocity_left, double current_velocity_right) {
+  error_left = setpoint_left - current_velocity_left;
+  error_right = setpoint_right - current_velocity_right;
+  integral_left += error_left;
+  integral_right += error_right;
+  derivative_left = error_left - prev_error_left;
+  derivative_right = error_right - prev_error_right;
+  duty_cycle_left = kp_left * error_left + ki_left * integral_left + kd_left * derivative_left;
+  duty_cycle_right = kp_right * error_right + ki_right * integral_right + kd_right * derivative_right;
+  prev_error_left = error_left;
+  prev_error_right = error_right;
 }
 
 static void mcpwm_example_gpio_initialize()
@@ -68,35 +84,29 @@ static void mcpwm_example_gpio_initialize()
     gpio_set_direction(GPIO_DIR_RIGHT, GPIO_MODE_OUTPUT);
 }
 
-static void brushed_motor_forward(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num , float duty_cycle)
-{
-    gpio_set_level(GPIO_DIR_LEFT, 0);
-    gpio_set_level(GPIO_DIR_RIGHT, 1);
-    // mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_B);
-    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_A, duty_cycle);
-    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_B, duty_cycle);
+static void set_motor_velocity(
+        mcpwm_unit_t mcpwm_num,
+        mcpwm_timer_t timer_num,
+        float duty_cycle_left,
+        float duty_cycle_right,
+        bool direction_left,
+        bool direction_right
+    )
+{   
+    // Set motor direction
+    gpio_set_level(GPIO_DIR_LEFT, direction_left);
+    gpio_set_level(GPIO_DIR_RIGHT, direction_right);
+
+    // Set motor speed
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_A, duty_cycle_left);
+    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_B, duty_cycle_right);
+
+    //call this each time, if operator was previously in low/high state
     mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
-    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
+    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); 
 }
 
-static void brushed_motor_backward(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num , float duty_cycle)
-{
-    gpio_set_level(GPIO_DIR_LEFT, 1);
-    gpio_set_level(GPIO_DIR_RIGHT, 0);
-    // mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_A);
-    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_A, duty_cycle);
-    mcpwm_set_duty(mcpwm_num, timer_num, MCPWM_OPR_B, duty_cycle);
-    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
-    mcpwm_set_duty_type(mcpwm_num, timer_num, MCPWM_OPR_B, MCPWM_DUTY_MODE_0); //call this each time, if operator was previously in low/high state
-}
-
-static void brushed_motor_stop(mcpwm_unit_t mcpwm_num, mcpwm_timer_t timer_num)
-{
-    mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_A);
-    mcpwm_set_signal_low(mcpwm_num, timer_num, MCPWM_OPR_B);
-}
-
-static void mcpwm_example_brushed_motor_control(void *arg)
+static void motor_controller(void *arg)
 {
     //1. mcpwm gpio initialization
     mcpwm_example_gpio_initialize();
@@ -110,22 +120,27 @@ static void mcpwm_example_brushed_motor_control(void *arg)
     pwm_config.counter_mode = MCPWM_UP_COUNTER;
     pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);    //Configure PWM0A & PWM0B with above settings
+
     while (1) {
-        
-        brushed_motor_forward(MCPWM_UNIT_0, MCPWM_TIMER_0, dutyCycle);
+        if(setpoint_left < 0){
+            direction_left = 1;
+        }
+        else{
+            direction_left = 0;
+        }
+        if(setpoint_right < 0){
+            direction_right = 0:
+        }
+        else{
+            direction_right = 1;
+        }
+
+        set_motor_velocity(MCPWM_UNIT_0, MCPWM_TIMER_0, duty_cycle_left, duty_cycle_right, direction_left, direction_right);
         vTaskDelay(500 / portTICK_RATE_MS);
-        // brushed_motor_backward(MCPWM_UNIT_0, MCPWM_TIMER_0, vel_right);
-        // vTaskDelay(2000 / portTICK_RATE_MS);
-        // brushed_motor_stop(MCPWM_UNIT_0, MCPWM_TIMER_0);
-        // vTaskDelay(2000 / portTICK_RATE_MS);
     }
 }
 
-void app_main(void)
-{   
-    printf("Testing brushed motor...\n");
-    xTaskCreate(mcpwm_example_brushed_motor_control, "mcpwm_examlpe_brushed_motor_control", 4096, NULL, 5, NULL);
-
+void encoder_reader(void){
     // Rotary encoder underlying device is represented by a PCNT unit in this example
     uint32_t pcnt_unit_enc_left = 0;
     uint32_t pcnt_unit_enc_right = 1;
@@ -166,11 +181,17 @@ void app_main(void)
         vel_left = 3.1415 * (encoder_left_val -  encoder_left_prev_val) / 30;
         vel_right = 3.1415 * (encoder_right_val - encoder_right_prev_val) / 30;
         
-        ESP_LOGI(TAG, "%f, %f, %f", vel_left, vel_right, dutyCycle);
+        ESP_LOGI(TAG, "%f, %f, %f", vel_left, vel_right, duty_cycle_left);
         rosserial_publish(vel_left + vel_right);
         vTaskDelay(pdMS_TO_TICKS(100));
-        updatePID(vel_left); //m/s
+        updatePID(vel_left, vel_right); //m/s
         encoder_left_prev_val = encoder_left_val;
         encoder_right_prev_val = encoder_right_val;
     }
+} 
+void app_main(void)
+{   
+    printf("Testing brushed motor...\n");
+    xTaskCreate(encoder_reader, "encoder_reader", 4096, NULL, 5, NULL);
+    xTaskCreate(motor_controller, "motor_controller", 4096, NULL, 4, NULL);
 }
