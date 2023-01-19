@@ -27,22 +27,16 @@ static const char *TAG = "Wheel Velocities";
 // EncB: D22          ////
 //////////////////////////
 
-// double Ku = 4.515;
-// double Tu = 0.45;
-// double kp = 0.6 * 4.515; // Ku = 4.515 Tu = 0.45secs
-// double ki = 2 * 0.6 * 4.515 / 0.45;
-// double kd = 0.6 * 4.515 * 0.45 / 8;
-
-double kp_left = 4.5;
+double kp_left = 4;
 double ki_left = 0;
 double kd_left = 0;
 
-double kp_right = 4.5;
+double kp_right = 3.7;
 double ki_right = 0;
 double kd_right = 0;
 
 double setpoint_left = 10;  // desired velocity in m/s
-double setpoint_right = 10; // desired velocity in m/s
+double setpoint_right = -10; // desired velocity in m/s
 double error_left;
 double error_right;
 double prev_error_left = 0;
@@ -122,18 +116,8 @@ static void motor_controller(void *arg)
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);    //Configure PWM0A & PWM0B with above settings
 
     while (1) {
-        if(setpoint_left < 0){
-            direction_left = 1;
-        }
-        else{
-            direction_left = 0;
-        }
-        if(setpoint_right < 0){
-            direction_right = 0:
-        }
-        else{
-            direction_right = 1;
-        }
+        direction_left = (setpoint_left < 0) ? 1 : 0;
+        direction_right = (setpoint_right < 0) ? 0 : 1;
 
         set_motor_velocity(MCPWM_UNIT_0, MCPWM_TIMER_0, duty_cycle_left, duty_cycle_right, direction_left, direction_right);
         vTaskDelay(500 / portTICK_RATE_MS);
